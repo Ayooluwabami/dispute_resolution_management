@@ -70,4 +70,11 @@ export const config = {
     file: requireEnv('LOG_FILE'),
     maxFiles: parseInt(requireEnv('LOG_MAX_FILES'), 10),
   },
+
+  apiKeys: {
+    initialUserName: requireEnv('API_KEY_INITIAL_NAME'),
+    initialUserEmail: requireEnv('API_KEY_INITIAL_EMAIL'),
+    initialUserRole: requireEnv('API_KEY_INITIAL_ROLE'),
+    initialUserIps: requireEnv('API_KEY_INITIAL_IPS').split(',').map(ip => ip.trim()),
+  },
 };
