@@ -1,0 +1,650 @@
+openapi: 3.0.0
+info:
+  title: Dispute Resolution Service API
+  version: 1.0.0
+  description: API for handling dispute resolution and arbitration in an escrow system
+
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Local development server
+  - url: https://api.disputeresolution.com/api/v1
+    description: Production server
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [error]
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: string
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        full_name:
+          type: string
+        role:
+          type: string
+          enum: [admin, arbitrator, user]
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Transaction:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+        amount:
+          type: number
+          format: double
+        source_account_name:
+          type: string
+        source_bank:
+          type: string
+        beneficiary_account_name:
+          type: string
+        beneficiary_bank:
+          type: string
+        status:
+          type: string
+          enum: [pending, completed, failed, disputed]
+        transaction_date:
+          type: string
+          format: date-time
+        channel_code:
+          type: string
+        destination_node:
+          type: string
+
+    Dispute:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        transaction_id:
+          type: string
+          format: uuid
+        initiator_id:
+          type: string
+          format: uuid
+        respondent_id:
+          type: string
+          format: uuid
+        arbitrator_id:
+          type: string
+          format: uuid
+        dispute_reason:
+          type: string
+        dispute_details:
+          type: string
+        status:
+          type: string
+          enum: [opened, under_review, resolved, rejected, canceled]
+        resolution:
+          type: string
+          enum: [pending, in_favor_of_initiator, in_favor_of_respondent, partial]
+        resolution_notes:
+          type: string
+        resolution_date:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Evidence:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        dispute_id:
+          type: string
+          format: uuid
+        submitted_by:
+          type: string
+          format: uuid
+        evidence_type:
+          type: string
+        file_path:
+          type: string
+        description:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Comment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        dispute_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        comment:
+          type: string
+        is_private:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/register:
+    post:
+      tags: [Authentication]
+      security: []
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - email
+                - password
+                - confirm_password
+                - full_name
+              properties:
+                username:
+                  type: string
+                  minLength: 3
+                  maxLength: 30
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+                confirm_password:
+                  type: string
+                full_name:
+                  type: string
+                  minLength: 2
+                  maxLength: 100
+                role:
+                  type: string
+                  enum: [admin, arbitrator, user]
+                  default: user
+      responses:
+        201:
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [success]
+                  data:
+                    type: object
+                    properties:
+                      user:
+                        $ref: '#/components/schemas/User'
+                      token:
+                        type: string
+        400:
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /auth/login:
+    post:
+      tags: [Authentication]
+      security: []
+      summary: Login user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        200:
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [success]
+                  data:
+                    type: object
+                    properties:
+                      user:
+                        $ref: '#/components/schemas/User'
+                      token:
+                        type: string
+        401:
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /disputes:
+    get:
+      tags: [Disputes]
+      summary: Get all disputes
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [opened, under_review, resolved, rejected, canceled]
+        - in: query
+          name: from_date
+          schema:
+            type: string
+            format: date
+        - in: query
+          name: to_date
+          schema:
+            type: string
+            format: date
+      responses:
+        200:
+          description: List of disputes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [success]
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Dispute'
+                  pagination:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+                      pages:
+                        type: integer
+
+    post:
+      tags: [Disputes]
+      summary: Create a new dispute
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - transaction_id
+                - dispute_reason
+                - dispute_details
+              properties:
+                transaction_id:
+                  type: string
+                  format: uuid
+                respondent_id:
+                  type: string
+                  format: uuid
+                dispute_reason:
+                  type: string
+                dispute_details:
+                  type: string
+      responses:
+        201:
+          description: Dispute created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [success]
+                  data:
+                    $ref: '#/components/schemas/Dispute'
+
+  /disputes/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Disputes]
+      summary: Get dispute by ID
+      responses:
+        200:
+          description: Dispute details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [success]
+                  data:
+                    $ref: '#/components/schemas/Dispute'
+        404:
+          description: Dispute not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      tags: [Disputes]
+      summary: Update dispute
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                respondent_id:
+                  type: string
+                  format: uuid
+                dispute_reason:
+                  type: string
+                dispute_details:
+                  type: string
+                status:
+                  type: string
+                  enum: [opened, under_review, resolved, rejected, canceled]
+                resolution:
+                  type: string
+                  enum: [pending, in_favor_of_initiator, in_favor_of_respondent, partial]
+                resolution_notes:
+                  type: string
+      responses:
+        200:
+          description: Dispute updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [success]
+                  data:
+                    $ref: '#/components/schemas/Dispute'
+
+  /disputes/{id}/evidence:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Disputes]
+      summary: Add evidence to dispute
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - evidence_type
+                - description
+              properties:
+                evidence_type:
+                  type: string
+                file_path:
+                  type: string
+                description:
+                  type: string
+      responses:
+        201:
+          description: Evidence added successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [success]
+                  data:
+                    $ref: '#/components/schemas/Evidence'
+
+  /disputes/{id}/comment:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Disputes]
+      summary: Add comment to dispute
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - comment
+              properties:
+                comment:
+                  type: string
+                is_private:
+                  type: boolean
+                  default: false
+      responses:
+        201:
+          description: Comment added successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [success]
+                  data:
+                    $ref: '#/components/schemas/Comment'
+
+  /arbitration/cases:
+    get:
+      tags: [Arbitration]
+      summary: Get arbitration cases
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [opened, under_review, resolved, rejected, canceled]
+      responses:
+        200:
+          description: List of arbitration cases
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [success]
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Dispute'
+                  pagination:
+                    type: object
+                    properties:
+                      total:
+                        type: integer
+                      page:
+                        type: integer
+                      limit:
+                        type: integer
+                      pages:
+                        type: integer
+
+  /arbitration/cases/{id}/assign:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Arbitration]
+      summary: Assign arbitrator to case
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - arbitrator_id
+              properties:
+                arbitrator_id:
+                  type: string
+                  format: uuid
+      responses:
+        200:
+          description: Arbitrator assigned successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [success]
+                  data:
+                    $ref: '#/components/schemas/Dispute'
+
+  /arbitration/cases/{id}/resolve:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Arbitration]
+      summary: Resolve arbitration case
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - resolution
+                - resolution_notes
+              properties:
+                resolution:
+                  type: string
+                  enum: [in_favor_of_initiator, in_favor_of_respondent, partial]
+                resolution_notes:
+                  type: string
+      responses:
+        200:
+          description: Case resolved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [success]
+                  data:
+                    $ref: '#/components/schemas/Dispute'

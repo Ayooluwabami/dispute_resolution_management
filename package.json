@@ -1,0 +1,63 @@
+{
+  "name": "dispute-resolution-service",
+  "version": "1.0.0",
+  "description": "Dispute Resolution Microservice for Escrow Engine",
+  "main": "dist/server.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "start:dev": "nodemon --watch src --exec tsx src/server.ts",
+    "dev": "tsx watch src/server.ts",
+    "test": "jest",
+    "migrate": "knex migrate:latest --knexfile src/database/knexfile.ts",
+    "seed": "knex seed:run --knexfile src/database/knexfile.ts",
+    "migrate:make": "knex migrate:make --knexfile src/database/knexfile.ts",
+    "setup-api-key": "tsx src/scripts/setupApiKey.ts"
+  },
+  "keywords": [
+    "dispute",
+    "resolution",
+    "escrow",
+    "microservice",
+    "arbitration"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@sendgrid/mail": "^8.1.5",
+    "@types/body-parser": "^1.19.5",
+    "@types/cors": "^2.8.18",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/multer": "^1.4.12",
+    "axios": "^1.9.0",
+    "body-parser": "^2.2.0",
+    "cors": "^2.8.5",
+    "crypto-random-string": "^5.0.0",
+    "dotenv": "^16.5.0",
+    "ioredis": "^5.6.1",
+    "joi": "^17.13.3",
+    "jsonwebtoken": "^9.0.2",
+    "knex": "^3.1.0",
+    "mime-types": "^3.0.1",
+    "multer": "^2.0.0",
+    "mysql2": "^3.14.1",
+    "restana": "^5.0.0",
+    "sanitize-filename": "^1.6.3",
+    "uuid": "^11.1.0",
+    "winston": "^3.17.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.14",
+    "@types/mime-types": "^2.1.4",
+    "@types/node": "^22.15.21",
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.10",
+    "ts-jest": "^29.3.4",
+    "ts-node": "^10.9.2",
+    "ts-node-dev": "^2.0.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
