@@ -1,6 +1,8 @@
 import { db } from '../database/connection';
 import { HttpError } from '../utils/httpError';
 import { logger } from '../utils/logger';
+import { emailService } from '../services/emailService';
+import { redisService } from '../services/redisService';
 
 export class ArbitrationService {
   public async getAllArbitrationCases(params: any) {
@@ -53,7 +55,7 @@ export class ArbitrationService {
         },
       };
     } catch (error: any) {
-      logger.error(`Error getting all arbitration cases: ${error.message}`);
+      logger.error(`Error getting all arbitration cases: ${error.message}`, { stack: error.stack });
       throw new HttpError(500, 'Database error while fetching arbitration cases');
     }
   }
@@ -71,7 +73,7 @@ export class ArbitrationService {
         .where(function () {
           this.where('disputes.arbitrator_id', arbitratorId)
             .orWhereNull('disputes.arbitrator_id')
-            .andWhere('disputes.status', 'opened');
+            .andWhere('disputes.status', 'open');
         });
 
       if (status) {
@@ -89,7 +91,7 @@ export class ArbitrationService {
       const countQuery = db('disputes').where(function () {
         this.where('arbitrator_id', arbitratorId)
           .orWhereNull('arbitrator_id')
-          .andWhere('status', 'opened');
+          .andWhere('status', 'open');
       });
 
       if (status) {
@@ -131,13 +133,19 @@ export class ArbitrationService {
         },
       };
     } catch (error: any) {
-      logger.error(`Error getting arbitrator cases: ${error.message}`, { arbitratorId });
+      logger.error(`Error getting arbitrator cases: ${error.message}`, { arbitratorId, stack: error.stack });
       throw new HttpError(500, 'Database error while fetching arbitrator cases');
     }
   }
 
   public async getArbitrationCaseById(id: string) {
     try {
+      const cacheKey = `arbitration_case:${id}`;
+      const cached = await redisService.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+
       const dispute = await db('disputes')
         .join('transactions', 'disputes.transaction_id', 'transactions.id')
         .leftJoin('api_keys as arbitrator', 'disputes.arbitrator_id', 'arbitrator.id')
@@ -160,12 +168,12 @@ export class ArbitrationService {
         throw new HttpError(404, 'Arbitration case not found');
       }
 
-      const evidence = await db('dispute_evidence')
+      const evidence = await db('evidence')
         .where('dispute_id', id)
         .select('*')
         .orderBy('created_at', 'desc');
 
-      const comments = await db('dispute_comments')
+      const comments = await db('comments')
         .where('dispute_id', id)
         .select('*')
         .orderBy('created_at', 'desc');
@@ -175,14 +183,17 @@ export class ArbitrationService {
         .select('*')
         .orderBy('action_date', 'desc');
 
-      return {
+      const result = {
         ...dispute,
         evidence,
         comments,
         history,
       };
+
+      await redisService.setOTP(cacheKey, JSON.stringify(result), 600); // Cache for 10 minutes
+      return result;
     } catch (error: any) {
-      logger.error(`Error getting arbitration case by ID: ${error.message}`, { disputeId: id });
+      logger.error(`Error getting arbitration case by ID: ${error.message}`, { disputeId: id, stack: error.stack });
       if (error instanceof HttpError) throw error;
       throw new HttpError(500, 'Database error while fetching arbitration case');
     }
@@ -222,17 +233,27 @@ export class ArbitrationService {
 
         await trx('dispute_history').insert({
           dispute_id: id,
-          actor_email: user.email,
+          created_by: user.id,
           action: 'arbitrator_assigned',
           details: `Arbitrator assigned: ${arbitrator.email}`,
+          action_date: db.fn.now(),
+        });
+
+        // Send email to arbitrator
+        await emailService.sendEmail({
+          email: arbitrator.email,
+          subject: 'New Arbitration Case Assigned',
+          message: `You have been assigned to arbitrate dispute ${id}. Please review the case details in the platform.`,
         });
 
         return id;
       });
 
+      // Invalidate cache
+      await redisService.delete(`arbitration_case:${result}`);
       return await this.getArbitrationCaseById(result);
     } catch (error: any) {
-      logger.error(`Error assigning arbitrator: ${error.message}`, { disputeId: id });
+      logger.error(`Error assigning arbitrator: ${error.message}`, { disputeId: id, stack: error.stack });
       if (error instanceof HttpError) throw error;
       throw new HttpError(500, 'Database error while assigning arbitrator');
     }
@@ -251,7 +272,7 @@ export class ArbitrationService {
           throw new HttpError(403, 'Not authorized to review this case');
         }
 
-        if (dispute.status !== 'opened' && dispute.status !== 'under_review') {
+        if (dispute.status !== 'open' && dispute.status !== 'under_review') {
           throw new HttpError(400, 'Dispute cannot be reviewed in its current state');
         }
 
@@ -262,15 +283,16 @@ export class ArbitrationService {
 
         await trx('dispute_history').insert({
           dispute_id: id,
-          actor_email: user.email,
+          created_by: user.id,
           action: 'review_started',
           details: notes || 'Case review started',
+          action_date: db.fn.now(),
         });
 
         if (notes && notes.trim()) {
-          await trx('dispute_comments').insert({
+          await trx('comments').insert({
             dispute_id: id,
-            commenter_email: user.email,
+            created_by: user.id,
             comment: notes,
             is_private: true,
             created_at: db.fn.now(),
@@ -280,9 +302,11 @@ export class ArbitrationService {
         return id;
       });
 
+      // Invalidate cache
+      await redisService.delete(`arbitration_case:${result}`);
       return await this.getArbitrationCaseById(result);
     } catch (error: any) {
-      logger.error(`Error reviewing case: ${error.message}`, { disputeId: id });
+      logger.error(`Error reviewing case: ${error.message}`, { disputeId: id, stack: error.stack });
       if (error instanceof HttpError) throw error;
       throw new HttpError(500, 'Database error while reviewing case');
     }
@@ -320,9 +344,10 @@ export class ArbitrationService {
 
         await trx('dispute_history').insert({
           dispute_id: id,
-          actor_email: user.email,
+          created_by: user.id,
           action: 'resolved',
           details: `Case resolved: ${resolution.replace(/_/g, ' ')}`,
+          action_date: db.fn.now(),
         });
 
         let transactionStatus = 'completed';
@@ -335,20 +360,43 @@ export class ArbitrationService {
           updated_at: db.fn.now(),
         });
 
-        await trx('dispute_comments').insert({
+        await trx('comments').insert({
           dispute_id: id,
-          commenter_email: user.email,
+          created_by: user.id,
           comment: resolutionNotes || `Case resolved: ${resolution.replace(/_/g, ' ')}`,
           is_private: false,
           created_at: db.fn.now(),
         });
 
+        // Send email notifications
+        const arbitrator = await trx('api_keys').where('id', dispute.arbitrator_id).first();
+        await Promise.all([
+          emailService.sendEmail({
+            email: dispute.initiator_email,
+            subject: 'Dispute Resolution',
+            message: `Dispute ${id} has been resolved: ${resolution.replace(/_/g, ' ')}. Notes: ${resolutionNotes}`,
+          }),
+          emailService.sendEmail({
+            email: dispute.counterparty_email,
+            subject: 'Dispute Resolution',
+            message: `Dispute ${id} has been resolved: ${resolution.replace(/_/g, ' ')}. Notes: ${resolutionNotes}`,
+          }),
+          arbitrator &&
+            emailService.sendEmail({
+              email: arbitrator.email,
+              subject: 'Dispute Resolution',
+              message: `Dispute ${id} you arbitrated has been resolved: ${resolution.replace(/_/g, ' ')}. Notes: ${resolutionNotes}`,
+            }),
+        ]);
+
         return id;
       });
 
+      // Invalidate cache
+      await redisService.delete(`arbitration_case:${result}`);
       return await this.getArbitrationCaseById(result);
     } catch (error: any) {
-      logger.error(`Error resolving case: ${error.message}`, { disputeId: id });
+      logger.error(`Error resolving case: ${error.message}`, { disputeId: id, stack: error.stack });
       if (error instanceof HttpError) throw error;
       throw new HttpError(500, 'Database error while resolving case');
     }
@@ -356,6 +404,12 @@ export class ArbitrationService {
 
   public async getArbitrationStats(fromDate?: string, toDate?: string) {
     try {
+      const cacheKey = `arbitration_stats:${fromDate || 'all'}:${toDate || 'all'}`;
+      const cached = await redisService.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+
       const query = db('disputes');
 
       if (fromDate) {
@@ -368,7 +422,11 @@ export class ArbitrationService {
 
       const [totalCount] = await query.clone().count('id as count');
       const statusCounts = await query.clone().select('status').count('id as count').groupBy('status');
-      const resolutionCounts = await query.clone().select('resolution').count('id as count').groupBy('resolution');
+      const resolutionCounts = await query
+        .clone()
+        .select('resolution')
+        .count('id as count')
+        .groupBy('resolution');
       const avgResolutionTime = await query
         .clone()
         .whereNotNull('resolution_date')
@@ -377,41 +435,59 @@ export class ArbitrationService {
         .first();
 
       const arbitratorPerformance = await db('disputes')
-        .join('api_keys', 'disputes.arbitrator_id', 'api_keys.id')
-        .whereNotNull('arbitrator_id')
-        .select('api_keys.id', 'api_keys.email')
+        .leftJoin('api_keys as arbitrator', 'disputes.arbitrator_id', 'arbitrator.id')
+        .whereNotNull('disputes.arbitrator_id')
+        .select('arbitrator.id', 'arbitrator.email')
         .count('disputes.id as total_cases')
         .sum(db.raw('CASE WHEN disputes.status = "resolved" THEN 1 ELSE 0 END as resolved_cases'))
-        .avg(db.raw('TIMESTAMPDIFF(HOUR, disputes.created_at, disputes.resolution_date) as avg_resolution_time'))
-        .groupBy('api_keys.id', 'api_keys.email')
+        .avg(
+          db.raw('TIMESTAMPDIFF(HOUR, disputes.created_at, disputes.resolution_date) as avg_resolution_time')
+        )
+        .groupBy('arbitrator.id', 'arbitrator.email')
         .orderBy('total_cases', 'desc');
 
-      return {
+      const result = {
         totalDisputes: parseInt(totalCount.count as string),
         statusBreakdown: {
-          opened: parseInt(statusCounts.find((s) => s.status === 'opened')?.count as string) || 0,
-          under_review: parseInt(statusCounts.find((s) => s.status === 'under_review')?.count as string) || 0,
+          open: parseInt(statusCounts.find((s) => s.status === 'open')?.count as string) || 0,
+          under_review:
+            parseInt(statusCounts.find((s) => s.status === 'under_review')?.count as string) || 0,
           resolved: parseInt(statusCounts.find((s) => s.status === 'resolved')?.count as string) || 0,
           rejected: parseInt(statusCounts.find((s) => s.status === 'rejected')?.count as string) || 0,
           canceled: parseInt(statusCounts.find((s) => s.status === 'canceled')?.count as string) || 0,
         },
         resolutionBreakdown: {
-          pending: parseInt(resolutionCounts.find((r) => r.resolution === 'pending')?.count as string) || 0,
-          in_favor_of_initiator: parseInt(resolutionCounts.find((r) => r.resolution === 'in_favor_of_initiator')?.count as string) || 0,
-          in_favor_of_respondent: parseInt(resolutionCounts.find((r) => r.resolution === 'in_favor_of_respondent')?.count as string) || 0,
+          pending: parseInt(resolutionCounts.find((r) => !r.resolution)?.count as string) || 0,
+          in_favor_of_initiator:
+            parseInt(
+              resolutionCounts.find((r) => r.resolution === 'in_favor_of_initiator')?.count as string
+            ) || 0,
+          in_favor_of_respondent:
+            parseInt(
+              resolutionCounts.find((r) => r.resolution === 'in_favor_of_respondent')?.count as string
+            ) || 0,
           partial: parseInt(resolutionCounts.find((r) => r.resolution === 'partial')?.count as string) || 0,
         },
         averageResolutionTimeHours: parseFloat(avgResolutionTime?.avg_hours as string) || 0,
         arbitratorPerformance,
       };
+
+      await redisService.setOTP(cacheKey, JSON.stringify(result), 3600); // Cache for 1 hour
+      return result;
     } catch (error: any) {
-      logger.error(`Error getting arbitration stats: ${error.message}`);
+      logger.error(`Error getting arbitration stats: ${error.message}`, { stack: error.stack });
       throw new HttpError(500, 'Database error while calculating arbitration statistics');
     }
   }
 
   public async getArbitratorStats(arbitratorId: string, fromDate?: string, toDate?: string) {
     try {
+      const cacheKey = `arbitrator_stats:${arbitratorId}:${fromDate || 'all'}:${toDate || 'all'}`;
+      const cached = await redisService.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+
       const query = db('disputes').where('arbitrator_id', arbitratorId);
 
       if (fromDate) {
@@ -424,7 +500,11 @@ export class ArbitrationService {
 
       const [totalCount] = await query.clone().count('id as count');
       const statusCounts = await query.clone().select('status').count('id as count').groupBy('status');
-      const resolutionCounts = await query.clone().select('resolution').count('id as count').groupBy('resolution');
+      const resolutionCounts = await query
+        .clone()
+        .select('resolution')
+        .count('id as count')
+        .groupBy('resolution');
       const avgResolutionTime = await query
         .clone()
         .whereNotNull('resolution_date')
@@ -440,26 +520,36 @@ export class ArbitrationService {
         .count('id as count')
         .first();
 
-      return {
+      const result = {
         totalAssignedDisputes: parseInt(totalCount.count as string),
         pendingDisputes: parseInt(pendingCount?.count as string) || 0,
         statusBreakdown: {
-          opened: parseInt(statusCounts.find((s) => s.status === 'opened')?.count as string) || 0,
-          under_review: parseInt(statusCounts.find((s) => s.status === 'under_review')?.count as string) || 0,
+          open: parseInt(statusCounts.find((s) => s.status === 'open')?.count as string) || 0,
+          under_review:
+            parseInt(statusCounts.find((s) => s.status === 'under_review')?.count as string) || 0,
           resolved: parseInt(statusCounts.find((s) => s.status === 'resolved')?.count as string) || 0,
           rejected: parseInt(statusCounts.find((s) => s.status === 'rejected')?.count as string) || 0,
           canceled: parseInt(statusCounts.find((s) => s.status === 'canceled')?.count as string) || 0,
         },
         resolutionBreakdown: {
-          pending: parseInt(resolutionCounts.find((r) => r.resolution === 'pending')?.count as string) || 0,
-          in_favor_of_initiator: parseInt(resolutionCounts.find((r) => r.resolution === 'in_favor_of_initiator')?.count as string) || 0,
-          in_favor_of_respondent: parseInt(resolutionCounts.find((r) => r.resolution === 'in_favor_of_respondent')?.count as string) || 0,
+          pending: parseInt(resolutionCounts.find((r) => !r.resolution)?.count as string) || 0,
+          in_favor_of_initiator:
+            parseInt(
+              resolutionCounts.find((r) => r.resolution === 'in_favor_of_initiator')?.count as string
+            ) || 0,
+          in_favor_of_respondent:
+            parseInt(
+              resolutionCounts.find((r) => r.resolution === 'in_favor_of_respondent')?.count as string
+            ) || 0,
           partial: parseInt(resolutionCounts.find((r) => r.resolution === 'partial')?.count as string) || 0,
         },
         averageResolutionTimeHours: parseFloat(avgResolutionTime?.avg_hours as string) || 0,
       };
+
+      await redisService.setOTP(cacheKey, JSON.stringify(result), 3600); // Cache for 1 hour
+      return result;
     } catch (error: any) {
-      logger.error(`Error getting arbitrator stats: ${error.message}`, { arbitratorId });
+      logger.error(`Error getting arbitrator stats: ${error.message}`, { arbitratorId, stack: error.stack });
       throw new HttpError(500, 'Database error while calculating arbitrator statistics');
     }
   }

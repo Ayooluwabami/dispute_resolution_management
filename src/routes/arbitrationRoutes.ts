@@ -11,7 +11,8 @@ export default function arbitrationRoute(app: any, prefix: string) {
   app.get(`${prefix}/cases/:id`, arbitratorRole, arbitrationController.getArbitrationCaseById.bind(arbitrationController));
   app.post(
     `${prefix}/cases/:id/assign`,
-    arbitratorRole,
+    checkRole(['admin']),
+    validateRequest(arbitrationValidation.assignArbitrator),
     arbitrationController.assignArbitrator.bind(arbitrationController)
   );
   app.post(

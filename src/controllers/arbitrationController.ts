@@ -32,8 +32,11 @@ export class ArbitrationController {
         data: result,
       });
     } catch (error: any) {
-      logger.error('Error getting arbitration cases', { error: error.message });
-      throw new HttpError(500, 'Failed to retrieve arbitration cases');
+      logger.error('Error getting arbitration cases', { error: error.message, query: req.query });
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to retrieve arbitration cases',
+      }, error.statusCode || 500);
     }
   }
 
@@ -71,7 +74,10 @@ export class ArbitrationController {
       });
     } catch (error: any) {
       logger.error('Error getting arbitration case by ID', { error: error.message, id: req.params.id });
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to retrieve arbitration case');
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to retrieve arbitration case',
+      }, error.statusCode || 500);
     }
   }
 
@@ -81,8 +87,8 @@ export class ArbitrationController {
       const { arbitrator_id } = req.body;
       const user = req.user!;
 
-      if (user.role !== 'admin' && arbitrator_id !== user.id) {
-        throw new HttpError(403, 'Not authorized to assign this arbitrator');
+      if (user.role !== 'admin') {
+        throw new HttpError(403, 'Only admins can assign arbitrators');
       }
 
       const updatedDispute = await this.arbitrationService.assignArbitrator(id, arbitrator_id, user);
@@ -94,7 +100,10 @@ export class ArbitrationController {
       });
     } catch (error: any) {
       logger.error('Error assigning arbitrator', { error: error.message, disputeId: req.params.id });
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to assign arbitrator');
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to assign arbitrator',
+      }, error.statusCode || 500);
     }
   }
 
@@ -126,7 +135,10 @@ export class ArbitrationController {
       });
     } catch (error: any) {
       logger.error('Error reviewing case', { error: error.message, disputeId: req.params.id });
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to start case review');
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to start case review',
+      }, error.statusCode || 500);
     }
   }
 
@@ -163,7 +175,10 @@ export class ArbitrationController {
       });
     } catch (error: any) {
       logger.error('Error resolving case', { error: error.message, disputeId: req.params.id });
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to resolve case');
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to resolve case',
+      }, error.statusCode || 500);
     }
   }
 
@@ -185,8 +200,11 @@ export class ArbitrationController {
         data: stats,
       });
     } catch (error: any) {
-      logger.error('Error getting arbitration stats', { error: error.message });
-      throw new HttpError(500, 'Failed to retrieve arbitration statistics');
+      logger.error('Error getting arbitration stats', { error: error.message, query: req.query });
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to retrieve arbitration statistics',
+      }, error.statusCode || 500);
     }
   }
 }

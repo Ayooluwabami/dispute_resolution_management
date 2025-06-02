@@ -35,8 +35,8 @@ class RedisService {
     try {
       await this.client.set(key, value, 'EX', expirySeconds);
     } catch (error: any) {
-      logger.error(`Error setting OTP: ${error.message}`, { key });
-      throw new HttpError(500, 'Failed to set OTP');
+      logger.error(`Error setting key: ${error.message}`, { key });
+      throw new HttpError(500, 'Failed to set key');
     }
   }
 
@@ -44,17 +44,17 @@ class RedisService {
     try {
       return await this.client.get(key);
     } catch (error: any) {
-      logger.error(`Error getting OTP: ${error.message}`, { key });
-      throw new HttpError(500, 'Failed to get OTP');
+      logger.error(`Error getting key: ${error.message}`, { key });
+      throw new HttpError(500, 'Failed to get key');
     }
   }
 
-  async deleteOTP(key: string): Promise<void> {
+  async delete(key: string): Promise<void> {
     try {
       await this.client.del(key);
     } catch (error: any) {
-      logger.error(`Error deleting OTP: ${error.message}`, { key });
-      throw new HttpError(500, 'Failed to delete OTP');
+      logger.error(`Error deleting key: ${error.message}`, { key });
+      throw new HttpError(500, 'Failed to delete key');
     }
   }
 
