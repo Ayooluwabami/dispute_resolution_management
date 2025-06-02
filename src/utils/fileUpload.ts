@@ -5,7 +5,7 @@ import { randomBytes } from 'crypto';
 import sanitizeFilename from 'sanitize-filename';
 import { config } from '../config/env.config';
 import { HttpError } from './httpError';
-import { Request } from 'express'; 
+import { Request } from 'express';
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -22,15 +22,16 @@ const storage = multer.diskStorage({
 const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
   try {
     if (file.size > config.upload.maxFileSize) {
-      return cb(new HttpError(400, `File size exceeds ${config.upload.maxFileSize} bytes`));
+      return cb(new HttpError(400, `File size exceeds ${config.upload.maxFileSize / 1024 / 1024}MB`));
     }
 
-    const ext = mimeTypes.extension(file.mimetype);
-    if (!ext || !config.upload.allowedTypes.includes(ext)) {
+    if (!config.upload.allowedTypes.includes(file.mimetype)) {
       return cb(
         new HttpError(
           400,
-          `File type not allowed. Allowed types: ${config.upload.allowedTypes.join(', ')}`
+          `File type not allowed. Allowed types: ${config.upload.allowedTypes
+            .map((mime) => mime.split('/')[1].toUpperCase())
+            .join(', ')}`
         )
       );
     }

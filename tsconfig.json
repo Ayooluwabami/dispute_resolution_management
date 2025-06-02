@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "es2020",
-    "module": "esnext", 
-    "moduleResolution": "node", 
+    "module": "esnext",
+    "moduleResolution": "node",
     "lib": ["es2020"],
     "outDir": "./dist",
     "rootDir": "./src",
@@ -13,6 +13,6 @@
     "resolveJsonModule": true,
     "typeRoots": ["./node_modules/@types", "src/types"]
   },
-  "include": ["src/**/*", "scripts/**/*"], 
+  "include": ["src/**/*", "scripts/**/*"],
   "exclude": ["node_modules", "**/*.test.ts"]
 }

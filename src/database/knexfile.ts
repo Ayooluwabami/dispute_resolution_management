@@ -1,15 +1,9 @@
-import type { Knex } from "knex";
+import type { Knex } from 'knex';
 import { config } from '../config/env.config.js';
 
-const baseConfig: Knex.Config = {
+const knexConfig: Knex.Config = {
   client: 'mysql2',
-  connection: {
-    host: config.database.host,
-    port: config.database.port,
-    user: config.database.user,
-    password: config.database.password,
-    database: config.database.name,
-  },
+  connection: {},
   pool: {
     min: config.database.minConnections,
     max: config.database.maxConnections,
@@ -23,27 +17,24 @@ const baseConfig: Knex.Config = {
   },
 };
 
-const configs: { [key: string]: Knex.Config } = {
-  development: {
-    ...baseConfig,
-    debug: true,
-  },
-  
-  test: {
-    ...baseConfig,
-    connection: {
-      ...baseConfig.connection as any,
-      database: `${config.database.name}_test`,
-    },
-  },
-  
-  production: {
-    ...baseConfig,
-    pool: {
-      min: 2,
-      max: 10,
-    },
-  },
-};
+if (['production', 'test'].includes(config.app.env)) {
+  knexConfig.connection = {
+    host: config.database.host,
+    user: config.database.user,
+    password: config.database.password,
+    database: config.app.env === 'test' ? `${config.database.name}_test` : config.database.name,
+    charset: 'utf8mb4',
+  };
+} else {
+  knexConfig.connection = {
+    host: config.database.host,
+    port: config.database.port,
+    user: config.database.user,
+    password: config.database.password,
+    database: config.database.name,
+    charset: 'utf8mb4',
+  };
+  knexConfig.debug = true;
+}
 
-export default configs;
+export default knexConfig;

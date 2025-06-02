@@ -8,7 +8,7 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 
 const requireEnv = (key: string): string => {
-  const value = process.env[key];
+  const value = process.env[key]?.trim();
   if (!value) {
     throw new Error(`Missing required environment variable: ${key}`);
   }
@@ -76,5 +76,9 @@ export const config = {
     initialUserEmail: requireEnv('API_KEY_INITIAL_EMAIL'),
     initialUserRole: requireEnv('API_KEY_INITIAL_ROLE'),
     initialUserIps: requireEnv('API_KEY_INITIAL_IPS').split(',').map(ip => ip.trim()),
+  },
+
+  network: {
+    trustedProxies: process.env.TRUSTED_PROXIES?.split(',').map(ip => ip.trim()) || ['127.0.0.1', '::1'],
   },
 };

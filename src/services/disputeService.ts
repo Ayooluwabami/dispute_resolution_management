@@ -145,12 +145,12 @@ export class DisputeService {
         throw new HttpError(404, 'Dispute not found');
       }
 
-      const evidence = await db('dispute_evidence')
+      const evidence = await db('evidence')
         .where('dispute_id', id)
         .select('*')
         .orderBy('created_at', 'desc');
 
-      const comments = await db('dispute_comments')
+      const comments = await db('comments')
         .where('dispute_id', id)
         .select('*')
         .orderBy('created_at', 'desc');
@@ -169,40 +169,67 @@ export class DisputeService {
 
   public async createDispute(disputeData: any) {
     try {
+      logger.info('Creating dispute', { disputeData });
       const result = await db.transaction(async (trx) => {
         const transaction = await trx('transactions').where('id', disputeData.transaction_id).first();
 
         if (!transaction) {
+          logger.warn('Transaction not found for dispute', { transaction_id: disputeData.transaction_id });
           throw new HttpError(404, 'Transaction not found');
         }
 
         const existingDispute = await trx('disputes').where('transaction_id', disputeData.transaction_id).first();
 
         if (existingDispute) {
+          logger.warn('Dispute already exists for transaction', { transaction_id: disputeData.transaction_id });
           throw new HttpError(409, 'Dispute already exists for this transaction');
         }
 
         await trx('transactions').where('id', disputeData.transaction_id).update({ status: 'disputed' });
 
-        const [disputeId] = await trx('disputes').insert({
-          ...disputeData,
-          status: 'opened',
+        await trx('disputes').insert({
+          transaction_id: disputeData.transaction_id,
+          initiator_email: disputeData.initiator_email,
+          counterparty_email: disputeData.counterparty_email,
+          reason: disputeData.reason,
+          description: disputeData.description,
+          amount: disputeData.amount || null,
+          status: 'open',
+          created_by: disputeData.created_by,
           created_at: db.fn.now(),
         });
 
+        const dispute = await trx('disputes')
+          .where({
+            transaction_id: disputeData.transaction_id,
+            initiator_email: disputeData.initiator_email,
+            created_by: disputeData.created_by,
+          })
+          .orderBy('created_at', 'desc')
+          .first();
+
+        if (!dispute) {
+          throw new Error('Failed to retrieve inserted dispute');
+        }
+
+        logger.info('Dispute inserted', { disputeId: dispute.id });
+
         await trx('dispute_history').insert({
-          dispute_id: disputeId.toString(),
-          actor_email: disputeData.initiator_email,
+          dispute_id: dispute.id,
+          created_by: disputeData.created_by,
           action: 'created',
           details: 'Dispute created',
+          action_date: db.fn.now(),
         });
 
-        return disputeId.toString();
+        return dispute.id;
       });
 
-      return await this.getDisputeById(result);
+      const dispute = await this.getDisputeById(result);
+      logger.info('Dispute created', { disputeId: dispute.id });
+      return dispute;
     } catch (error: any) {
-      logger.error(`Error creating dispute: ${error.message}`);
+      logger.error(`Error creating dispute: ${error.message}`, { disputeData });
       if (error instanceof HttpError) throw error;
       throw new HttpError(500, 'Database error while creating dispute');
     }
@@ -238,9 +265,10 @@ export class DisputeService {
 
         await trx('dispute_history').insert({
           dispute_id: id,
-          actor_email: user.email,
+          created_by: user.id,
           action: 'updated',
           details: 'Dispute details updated',
+          action_date: db.fn.now(),
         });
 
         return id;
@@ -267,19 +295,25 @@ export class DisputeService {
           throw new HttpError(400, 'Cannot add evidence to a finalized dispute');
         }
 
-        const [evidenceId] = await trx('dispute_evidence').insert({
-          ...evidenceData,
+        const [evidenceId] = await trx('evidence').insert({
+          dispute_id: evidenceData.dispute_id,
+          file_path: evidenceData.file_path,
+          file_name: evidenceData.file_name,
+          submitted_by_email: evidenceData.submitted_by_email,
+          evidence_type: evidenceData.evidence_type,
+          description: evidenceData.description,
           created_at: db.fn.now(),
         });
 
         await trx('dispute_history').insert({
           dispute_id: evidenceData.dispute_id,
-          actor_email: evidenceData.submitted_by_email,
+          created_by: evidenceData.created_by,
           action: 'evidence_added',
           details: `Evidence added: ${evidenceData.description}`,
+          action_date: db.fn.now(),
         });
 
-        const evidence = await trx('dispute_evidence')
+        const evidence = await trx('evidence')
           .where('id', evidenceId.toString())
           .select('*')
           .first();
@@ -304,19 +338,23 @@ export class DisputeService {
           throw new HttpError(404, 'Dispute not found');
         }
 
-        const [commentId] = await trx('dispute_comments').insert({
-          ...commentData,
+        const [commentId] = await trx('comments').insert({
+          dispute_id: commentData.dispute_id,
+          comment: commentData.comment,
+          created_by: commentData.created_by,
+          is_private: commentData.is_private || false,
           created_at: db.fn.now(),
         });
 
         await trx('dispute_history').insert({
           dispute_id: commentData.dispute_id,
-          actor_email: commentData.commenter_email,
+          created_by: commentData.created_by,
           action: 'comment_added',
           details: commentData.is_private ? 'Private comment added' : 'Comment added',
+          action_date: db.fn.now(),
         });
 
-        const comment = await trx('dispute_comments')
+        const comment = await trx('comments')
           .where('id', commentId.toString())
           .select('*')
           .first();
@@ -329,27 +367,6 @@ export class DisputeService {
       logger.error(`Error adding comment: ${error.message}`);
       if (error instanceof HttpError) throw error;
       throw new HttpError(500, 'Database error while adding comment');
-    }
-  }
-
-  public async getDisputeHistory(id: string) {
-    try {
-      const dispute = await db('disputes').where('id', id).first();
-
-      if (!dispute) {
-        throw new HttpError(404, 'Dispute not found');
-      }
-
-      const history = await db('dispute_history')
-        .where('dispute_id', id)
-        .select('*')
-        .orderBy('action_date', 'desc');
-
-      return history;
-    } catch (error: any) {
-      logger.error(`Error getting dispute history: ${error.message}`, { disputeId: id });
-      if (error instanceof HttpError) throw error;
-      throw new HttpError(500, 'Database error while fetching dispute history');
     }
   }
 
@@ -377,9 +394,10 @@ export class DisputeService {
 
         await trx('dispute_history').insert({
           dispute_id: id,
-          actor_email: user.email,
+          created_by: user.id,
           action: 'canceled',
           details: 'Dispute canceled by ' + (user.role === 'admin' ? 'administrator' : 'initiator'),
+          action_date: db.fn.now(),
         });
 
         await trx('transactions')
@@ -400,6 +418,27 @@ export class DisputeService {
     }
   }
 
+  public async getDisputeHistory(id: string) {
+    try {
+      const dispute = await db('disputes').where('id', id).first();
+
+      if (!dispute) {
+        throw new HttpError(404, 'Dispute not found');
+      }
+
+      const history = await db('dispute_history')
+        .where('dispute_id', id)
+        .select('*')
+        .orderBy('action_date', 'desc');
+
+      return history;
+    } catch (error: any) {
+      logger.error(`Error getting dispute history: ${error.message}`, { disputeId: id });
+      if (error instanceof HttpError) throw error;
+      throw new HttpError(500, 'Database error while fetching dispute history');
+    }
+  }
+
   public async getDisputeStats(fromDate?: string, toDate?: string) {
     try {
       const query = db('disputes');
@@ -417,15 +456,14 @@ export class DisputeService {
       const resolutionCounts = await query.clone().select('resolution').count('id as count').groupBy('resolution');
       const avgResolutionTime = await query
         .clone()
-        .whereNotNull('resolution_date')
-        .whereNotNull('created_at')
-        .select(db.raw('AVG(TIMESTAMPDIFF(HOUR, created_at, resolution_date)) as avg_hours'))
+        .where('status', 'resolved')
+        .select(db.raw('AVG(TIMESTAMPDIFF(HOUR, created_at, updated_at)) as avg_hours'))
         .first();
 
       return {
         totalDisputes: parseInt(totalCount.count as string),
         statusBreakdown: {
-          opened: parseInt(statusCounts.find((s) => s.status === 'opened')?.count as string) || 0,
+          open: parseInt(statusCounts.find((s) => s.status === 'open')?.count as string) || 0,
           under_review: parseInt(statusCounts.find((s) => s.status === 'under_review')?.count as string) || 0,
           resolved: parseInt(statusCounts.find((s) => s.status === 'resolved')?.count as string) || 0,
           rejected: parseInt(statusCounts.find((s) => s.status === 'rejected')?.count as string) || 0,

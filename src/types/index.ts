@@ -1,23 +1,25 @@
 import { Request as RestanaRequest } from 'restana';
 import { Request as ExpressRequest } from 'express';
+import { IncomingMessage } from 'http';
 
 interface User {
   id: string;
   email: string;
-  role: 'admin' | 'user' | 'arbitrator'; 
+  role: 'admin' | 'user' | 'arbitrator';
   [key: string]: any;
 }
 
-type CustomRequest = (RestanaRequest | ExpressRequest) & {
+type CustomRequest = (RestanaRequest | ExpressRequest) & Partial<IncomingMessage> & {
   user?: User;
   body: any;
   headers: { [key: string]: string | string[] | undefined };
   params: { [key: string]: string | undefined };
   clientEmail?: string;
   counterpartyEmail?: string;
+  clientIp?: string; 
   ip: string;
-  path: string; 
-  method: string; 
+  path: string;
+  method: string;
   file?: Express.Multer.File;
 };
 

@@ -2,6 +2,7 @@ import { CustomRequest, RestanaResponse } from '../types';
 import { DisputeService } from '../services/disputeService';
 import { logger } from '../utils/logger';
 import { HttpError } from '../utils/httpError';
+import { db } from '../database/connection';
 
 export class DisputeController {
   private disputeService = new DisputeService();
@@ -85,28 +86,42 @@ export class DisputeController {
 
   public createDispute = async (req: CustomRequest, res: RestanaResponse) => {
     try {
-      const { transactionId, reason, description, amount, clientEmail, counterpartyEmail } = req.body;
+      logger.info('Starting createDispute', { body: req.body });
+      const { transaction_id, dispute_reason, dispute_details, clientEmail, counterpartyEmail, amount } = req.body;
       const user = req.user!;
 
+      if (clientEmail !== user.email) {
+        throw new HttpError(403, 'clientEmail must match the API key user email');
+      }
+
+      const transaction = await db('transactions').where('id', transaction_id).first();
+      if (!transaction) {
+        throw new HttpError(404, 'Transaction not found');
+      }
+
       const disputeData = {
-        transaction_id: transactionId,
+        transaction_id,
         initiator_email: clientEmail,
         counterparty_email: counterpartyEmail,
-        reason,
-        description,
-        amount,
+        reason: dispute_reason,
+        description: dispute_details,
+        amount: amount ? parseFloat(amount) : parseFloat(transaction.amount),
         created_by: user.id,
       };
 
       const newDispute = await this.disputeService.createDispute(disputeData);
 
+      logger.info('Dispute created successfully', { disputeId: newDispute.id });
       res.send({
         status: 'success',
         data: newDispute,
-      });
+      }, 201);
     } catch (error: any) {
-      logger.error(`Error creating dispute: ${error.message}`);
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to create dispute');
+      logger.error(`Error creating dispute: ${error.message}`, { body: req.body });
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to create dispute',
+      }, error.statusCode || 500);
     }
   };
 
@@ -153,9 +168,27 @@ export class DisputeController {
         throw new HttpError(400, 'File is required');
       }
 
+      const dispute = await this.disputeService.getDisputeById(id);
+      if (!dispute) {
+        throw new HttpError(404, 'Dispute not found');
+      }
+
+      if (
+        user.role !== 'admin' &&
+        dispute.initiator_email !== user.email &&
+        dispute.counterparty_email !== user.email
+      ) {
+        throw new HttpError(403, 'Not authorized to add evidence to this dispute');
+      }
+
+      if (dispute.status === 'resolved' || dispute.status === 'rejected' || dispute.status === 'canceled') {
+        throw new HttpError(400, 'Cannot add evidence to a finalized dispute');
+      }
+
       const evidenceData = {
         dispute_id: id,
-        submitted_by: user.id,
+        submitted_by_email: user.email,
+        created_by: user.id,
         evidence_type,
         description,
         file_path: file.path,
@@ -177,7 +210,7 @@ export class DisputeController {
   public addComment = async (req: CustomRequest, res: RestanaResponse) => {
     try {
       const { id } = req.params;
-      const { comment } = req.body;
+      const { comment, is_private } = req.body;
       const user = req.user!;
 
       const existingDispute = await this.disputeService.getDisputeById(id);
@@ -200,6 +233,7 @@ export class DisputeController {
         dispute_id: id,
         comment,
         created_by: user.id,
+        is_private: is_private || false,
       };
 
       const commentRecord = await this.disputeService.addComment(commentData);
@@ -282,7 +316,9 @@ export class DisputeController {
   public getDisputeStats = async (req: CustomRequest, res: RestanaResponse) => {
     try {
       const { from_date, to_date } = req.query as any;
-      if (req.user!.role !== 'admin') {
+      const user = req.user!;
+
+      if (user.role !== 'admin') {
         throw new HttpError(403, 'Admin access required');
       }
 

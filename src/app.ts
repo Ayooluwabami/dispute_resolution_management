@@ -3,7 +3,7 @@ import bodyParser from 'body-parser';
 import cors from 'cors';
 import { config } from './config/env.config';
 import { logger } from './utils/logger';
-import { apiKeyAuth } from './middleware/apiKeyAuth';
+import apiKeyAuth from './middleware/apiKeyAuth'; 
 import transactionRoute from './routes/transactionRoutes';
 import disputeRoute from './routes/disputeRoutes';
 import arbitrationRoute from './routes/arbitrationRoutes';
@@ -42,6 +42,11 @@ class App {
     disputeRoute(this.appServer, '/api/v1/disputes');
     arbitrationRoute(this.appServer, '/api/v1/arbitration');
     apiKeyRoute(this.appServer, '/api/v1/api-keys');
+
+    this.appServer.use((req: any, res: any) => {
+      logger.warn('Route not found', { path: req.url, method: req.method });
+      res.send({ status: 'error', message: 'Not found' }, 404);
+    });
   }
 
   public async close() {
