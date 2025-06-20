@@ -8,6 +8,7 @@ import transactionRoute from './routes/transactionRoutes';
 import disputeRoute from './routes/disputeRoutes';
 import arbitrationRoute from './routes/arbitrationRoutes';
 import apiKeyRoute from './routes/apiKeyRoutes';
+import businessRoutes from './routes/businessRoutes';
 import { errorHandler } from './middleware/errorHandler';
 
 class App {
@@ -38,10 +39,11 @@ class App {
     // Apply API key authentication to all routes except health check
     this.appServer.use(apiKeyAuth);
 
-    transactionRoute(this.appServer, '/api/v1/transactions');
-    disputeRoute(this.appServer, '/api/v1/disputes');
-    arbitrationRoute(this.appServer, '/api/v1/arbitration');
-    apiKeyRoute(this.appServer, '/api/v1/api-keys');
+    transactionRoute(this.appServer, '/v1/transactions');
+    disputeRoute(this.appServer, '/v1/disputes');
+    arbitrationRoute(this.appServer, '/v1/arbitration');
+    businessRoutes(this.appServer, '/v1/bsuiness');
+    apiKeyRoute(this.appServer, '/v1/api-keys');
 
     this.appServer.use((req: any, res: any) => {
       logger.warn('Route not found', { path: req.url, method: req.method });

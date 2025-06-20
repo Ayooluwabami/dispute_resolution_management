@@ -11,18 +11,20 @@ export default function apiKeyRoutes(app: any, basePath: string) {
         throw new HttpError(403, 'Admin access required');
       }
 
-      const { name, email, role, ips } = req.body;
+      const { name, email, role, ips, business_id } = req.body;
+      // business_id is optional for admin-created keys
       const apiKey = await apiKeyService.createApiKey({
         name,
         email,
         role,
         ips,
+        business_id: business_id || null,
       });
 
       res.send(
         {
           status: 'success',
-          data: { id: apiKey.id, key: apiKey.key, email, role, ips },
+          data: { id: apiKey.id, key: apiKey.key, email, role, ips, business_id: apiKey.business_id },
         },
         201
       );
@@ -39,7 +41,8 @@ export default function apiKeyRoutes(app: any, basePath: string) {
         throw new HttpError(403, 'Admin access required');
       }
 
-      const apiKeys = await apiKeyService.listApiKeys();
+      const { business_id } = req.query as any;
+      const apiKeys = await apiKeyService.listApiKeys(business_id);
       res.send({ status: 'success', data: apiKeys });
     } catch (error: any) {
       logger.error('Error listing API keys', { error: error.message });

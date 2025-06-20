@@ -9,7 +9,7 @@ export class ApiKeyService {
     return crypto.randomBytes(32).toString('hex');
   }
 
-  public async createApiKey(data: { name: string; email: string; role?: string; ips: string[] }) {
+  public async createApiKey(data: { name: string; email: string; role?: string; ips: string[]; business_id?: string | null }) {
     try {
       // Validate email
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -24,10 +24,18 @@ export class ApiKeyService {
       }
 
       // Validate role
-      const validRoles = ['admin', 'user'];
+      const validRoles = ['admin', 'user', 'arbitrator'];
       const role = data.role || 'user';
       if (!validRoles.includes(role)) {
         throw new HttpError(400, 'Invalid role');
+      }
+
+      // Validate business_id if provided
+      if (data.business_id) {
+        const business = await db('businesses').where({ id: data.business_id }).first();
+        if (!business) {
+          throw new HttpError(404, 'Business not found');
+        }
       }
 
       const result = await db.transaction(async (trx) => {
@@ -38,6 +46,7 @@ export class ApiKeyService {
           name: data.name,
           email: data.email,
           role,
+          business_id: data.business_id || null,
           is_active: true,
           created_at: db.fn.now(),
           updated_at: db.fn.now(),
@@ -70,7 +79,10 @@ export class ApiKeyService {
 
   public async validateApiKey(key: string, ipAddress: string) {
     try {
-      const apiKey = await db('api_keys').where({ key, is_active: true }).first();
+      const apiKey = await db('api_keys')
+        .where({ key, is_active: true })
+        .select('id', 'email', 'role', 'business_id')
+        .first();
 
       if (!apiKey) {
         throw new HttpError(401, 'Invalid or inactive API key');
@@ -120,13 +132,17 @@ export class ApiKeyService {
     }
   }
 
-  public async listApiKeys() {
+  public async listApiKeys(business_id?: string) {
     try {
-      const apiKeys = await db('api_keys').select('id', 'name', 'email', 'role', 'is_active', 'created_at');
+      const query = db('api_keys').select('id', 'name', 'email', 'role', 'is_active', 'created_at', 'business_id');
+      if (business_id) {
+        query.where('business_id', business_id);
+      }
+      const apiKeys = await query;
       return apiKeys;
     } catch (error: any) {
       logger.error('Error listing API keys', { error: error.message });
-      throw new HttpError(500, 'Failed to list API keys');
+      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to list API keys');
     }
   }
 

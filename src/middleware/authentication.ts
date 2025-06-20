@@ -18,7 +18,6 @@ export const authenticate = async (
       throw new HttpError(401, 'Authorization header missing');
     }
 
-    // Ensure authHeader is a string
     if (Array.isArray(authHeader)) {
       throw new HttpError(401, 'Invalid authorization header: Array not supported');
     }

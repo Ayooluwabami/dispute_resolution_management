@@ -7,6 +7,74 @@ import { db } from '../database/connection';
 export class DisputeController {
   private disputeService = new DisputeService();
 
+  public createDispute = async (req: CustomRequest, res: RestanaResponse) => {
+    try {
+      const {
+        transactionId, reason, initiatorEmail, counterpartyEmail, amount, evidenceType, evidenceDescription,
+        sessionId, sourceAccountName, sourceBank, beneficiaryAccountName, beneficiaryBank
+      } = req.body;
+      const evidenceFile = req.file;
+      const user = req.user!;
+      const businessId = (await db('api_keys').where('id', user.id).first())?.business_id;
+
+      if (!businessId && user.role !== 'admin') {
+        throw new HttpError(400, 'Business ID not found for API key');
+      }
+
+      const initiatorProfile = await db('profiles').where({ email: initiatorEmail, business_id: businessId }).first();
+      if (!initiatorProfile) {
+        throw new HttpError(404, 'Initiator profile not found');
+      }
+
+      const counterpartyProfile = await db('profiles').where({ email: counterpartyEmail, business_id: businessId }).first();
+
+      if (evidenceFile && (!evidenceType || !evidenceDescription)) {
+        throw new HttpError(400, 'Evidence type and description are required when uploading a file');
+      }
+
+      if ((evidenceType || evidenceDescription) && !evidenceFile) {
+        throw new HttpError(400, 'Evidence file is required when type or description is provided');
+      }
+
+      const disputeData = {
+        transaction_id: transactionId,
+        business_id: businessId,
+        initiator_email: initiatorEmail,
+        counterparty_email: counterpartyEmail,
+        initiator_profile_id: initiatorProfile.id,
+        counterparty_profile_id: counterpartyProfile?.id || null,
+        reason,
+        amount: amount ? parseFloat(amount) : null,
+        apiKeyId: user.id,
+        session_id: sessionId,
+        source_account_name: sourceAccountName,
+        source_bank: sourceBank,
+        beneficiary_account_name: beneficiaryAccountName,
+        beneficiary_bank: beneficiaryBank,
+        evidence: evidenceFile ? {
+          type: evidenceType,
+          description: evidenceDescription,
+          file_path: evidenceFile.path,
+          file_name: evidenceFile.originalname,
+          submitted_by: user.id,
+        } : null,
+      };
+
+      const newDispute = await this.disputeService.createDispute(disputeData);
+
+      res.send({
+        status: 'success',
+        data: newDispute,
+      }, 201);
+    } catch (error: any) {
+      logger.error(`Error creating dispute: ${error.message}`, { body: req.body });
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to create dispute',
+      }, error.statusCode || 500);
+    }
+  };
+
   public getAllDisputes = async (req: CustomRequest, res: RestanaResponse) => {
     try {
       const { page = '1', limit = '20', status, from_date, to_date } = req.query as any;
@@ -16,12 +84,15 @@ export class DisputeController {
         throw new HttpError(403, 'Admin access required');
       }
 
+      const businessId = user.role === 'admin' ? null : (await db('api_keys').where('id', user.id).first())?.business_id;
+
       const result = await this.disputeService.getAllDisputes({
         page: parseInt(page),
         limit: parseInt(limit),
         status,
         fromDate: from_date,
         toDate: to_date,
+        businessId,
       });
 
       res.send({
@@ -30,19 +101,34 @@ export class DisputeController {
       });
     } catch (error: any) {
       logger.error(`Error getting disputes: ${error.message}`);
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to retrieve disputes');
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to retrieve disputes',
+      }, error.statusCode || 500);
     }
   };
 
-  public getMyDisputes = async (req: CustomRequest, res: RestanaResponse) => {
+  public getUserDisputes = async (req: CustomRequest, res: RestanaResponse) => {
     try {
+      const { email } = req.params;
       const { page = '1', limit = '20', status } = req.query as any;
       const user = req.user!;
+      const businessId = user.role === 'admin' ? null : (await db('api_keys').where('id', user.id).first())?.business_id;
 
-      const result = await this.disputeService.getUserDisputes(user.email, {
+      const profileQuery = db('profiles').where({ email });
+      if (user.role !== 'admin') {
+        profileQuery.andWhere({ business_id: businessId });
+      }
+      const profile = await profileQuery.first();
+      if (!profile) {
+        throw new HttpError(404, 'Profile not found');
+      }
+
+      const result = await this.disputeService.getUserDisputes(email, {
         page: parseInt(page),
         limit: parseInt(limit),
         status,
+        businessId,
       });
 
       res.send({
@@ -51,7 +137,10 @@ export class DisputeController {
       });
     } catch (error: any) {
       logger.error(`Error getting user disputes: ${error.message}`);
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to retrieve disputes');
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to retrieve user disputes',
+      }, error.statusCode || 500);
     }
   };
 
@@ -59,8 +148,9 @@ export class DisputeController {
     try {
       const { id } = req.params;
       const user = req.user!;
+      const businessId = (await db('api_keys').where('id', user.id).first())?.business_id;
 
-      const dispute = await this.disputeService.getDisputeById(id);
+      const dispute = await this.disputeService.getDisputeById(id, user.role === 'admin' ? null : businessId);
 
       if (!dispute) {
         throw new HttpError(404, 'Dispute not found');
@@ -80,59 +170,68 @@ export class DisputeController {
       });
     } catch (error: any) {
       logger.error(`Error getting dispute by ID: ${error.message}`, { id: req.params.id });
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to retrieve dispute');
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to retrieve dispute',
+      }, error.statusCode || 500);
     }
   };
 
-  public createDispute = async (req: CustomRequest, res: RestanaResponse) => {
+  public getDisputesByProfileId = async (req: CustomRequest, res: RestanaResponse) => {
     try {
-      logger.info('Starting createDispute', { body: req.body });
-      const { transaction_id, dispute_reason, dispute_details, clientEmail, counterpartyEmail, amount } = req.body;
+      const profileId = req.params?.profileId;
+      if (!profileId) {
+        throw new HttpError(400, 'profileId parameter is required');
+      }
+
+      const { page = '1', limit = '20', status } = req.query as any;
       const user = req.user!;
+      const businessId = (await db('api_keys').where('id', user.id).first())?.business_id;
 
-      if (clientEmail !== user.email) {
-        throw new HttpError(403, 'clientEmail must match the API key user email');
+      const profileQuery = db('profiles').where({ id: profileId });
+      if (user.role !== 'admin') {
+        profileQuery.andWhere({ business_id: businessId });
+      }
+      const profile = await profileQuery.first();
+      if (!profile) {
+        throw new HttpError(404, 'Profile not found');
       }
 
-      const transaction = await db('transactions').where('id', transaction_id).first();
-      if (!transaction) {
-        throw new HttpError(404, 'Transaction not found');
-      }
+      const result = await this.disputeService.getDisputesByProfileId(profileId, {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        status,
+        businessId: user.role === 'admin' ? null : businessId,
+      });
 
-      const disputeData = {
-        transaction_id,
-        initiator_email: clientEmail,
-        counterparty_email: counterpartyEmail,
-        reason: dispute_reason,
-        description: dispute_details,
-        amount: amount ? parseFloat(amount) : parseFloat(transaction.amount),
-        created_by: user.id,
-      };
-
-      const newDispute = await this.disputeService.createDispute(disputeData);
-
-      logger.info('Dispute created successfully', { disputeId: newDispute.id });
       res.send({
         status: 'success',
-        data: newDispute,
-      }, 201);
+        data: result,
+      });
     } catch (error: any) {
-      logger.error(`Error creating dispute: ${error.message}`, { body: req.body });
-      res.send({
-        status: 'error',
-        message: error.message || 'Failed to create dispute',
-      }, error.statusCode || 500);
+      logger.error(`Error getting disputes by profile ID: ${error.message}`, { profileId: req.params?.profileId });
+      if (error instanceof HttpError) {
+        res.send({
+          status: 'error',
+          message: error.message,
+        }, error.statusCode);
+      } else {
+        res.send({
+          status: 'error',
+          message: 'Failed to retrieve disputes',
+        }, 500);
+      }
     }
   };
 
   public updateDispute = async (req: CustomRequest, res: RestanaResponse) => {
     try {
       const { id } = req.params;
-      const disputeData = req.body;
+      const { status, resolution, resolution_notes, action, dateTreated } = req.body;
       const user = req.user!;
+      const businessId = (await db('api_keys').where('id', user.id).first())?.business_id;
 
-      const existingDispute = await this.disputeService.getDisputeById(id);
-
+      const existingDispute = await this.disputeService.getDisputeById(id, user.role === 'admin' ? null : businessId);
       if (!existingDispute) {
         throw new HttpError(404, 'Dispute not found');
       }
@@ -145,7 +244,15 @@ export class DisputeController {
         throw new HttpError(400, 'Cannot update a resolved dispute');
       }
 
-      const updatedDispute = await this.disputeService.updateDispute(id, disputeData, user);
+      const disputeData = {
+        status,
+        resolution,
+        resolution_notes,
+        action,
+        date_treated: dateTreated || (status === 'resolved' || status === 'rejected' ? db.fn.now() : null),
+      };
+
+      const updatedDispute = await this.disputeService.updateDispute(id, disputeData, user, user.role === 'admin' ? null : businessId);
 
       res.send({
         status: 'success',
@@ -153,7 +260,10 @@ export class DisputeController {
       });
     } catch (error: any) {
       logger.error(`Error updating dispute: ${error.message}`, { id: req.params.id });
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to update dispute');
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to update dispute',
+      }, error.statusCode || 500);
     }
   };
 
@@ -163,12 +273,13 @@ export class DisputeController {
       const { evidence_type, description } = req.body;
       const file = req.file;
       const user = req.user!;
+      const businessId = (await db('api_keys').where('id', user.id).first())?.business_id;
 
       if (!file) {
         throw new HttpError(400, 'File is required');
       }
 
-      const dispute = await this.disputeService.getDisputeById(id);
+      const dispute = await this.disputeService.getDisputeById(id, user.role === 'admin' ? null : businessId);
       if (!dispute) {
         throw new HttpError(404, 'Dispute not found');
       }
@@ -181,18 +292,14 @@ export class DisputeController {
         throw new HttpError(403, 'Not authorized to add evidence to this dispute');
       }
 
-      if (dispute.status === 'resolved' || dispute.status === 'rejected' || dispute.status === 'canceled') {
-        throw new HttpError(400, 'Cannot add evidence to a finalized dispute');
-      }
-
       const evidenceData = {
         dispute_id: id,
-        submitted_by_email: user.email,
-        created_by: user.id,
+        submitted_by: user.id,
         evidence_type,
         description,
         file_path: file.path,
         file_name: file.originalname,
+        apiKeyId: user.id,
       };
 
       const evidence = await this.disputeService.addEvidence(evidenceData);
@@ -203,7 +310,10 @@ export class DisputeController {
       });
     } catch (error: any) {
       logger.error(`Error adding evidence: ${error.message}`, { disputeId: req.params.id });
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to add evidence');
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to add evidence',
+      }, error.statusCode || 500);
     }
   };
 
@@ -212,9 +322,9 @@ export class DisputeController {
       const { id } = req.params;
       const { comment, is_private } = req.body;
       const user = req.user!;
+      const businessId = (await db('api_keys').where('id', user.id).first())?.business_id;
 
-      const existingDispute = await this.disputeService.getDisputeById(id);
-
+      const existingDispute = await this.disputeService.getDisputeById(id, user.role === 'admin' ? null : businessId);
       if (!existingDispute) {
         throw new HttpError(404, 'Dispute not found');
       }
@@ -231,9 +341,11 @@ export class DisputeController {
 
       const commentData = {
         dispute_id: id,
+        business_id: businessId,
         comment,
         created_by: user.id,
         is_private: is_private || false,
+        apiKeyId: user.id,
       };
 
       const commentRecord = await this.disputeService.addComment(commentData);
@@ -244,7 +356,10 @@ export class DisputeController {
       });
     } catch (error: any) {
       logger.error(`Error adding comment: ${error.message}`, { disputeId: req.params.id });
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to add comment');
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to add comment',
+      }, error.statusCode || 500);
     }
   };
 
@@ -252,9 +367,9 @@ export class DisputeController {
     try {
       const { id } = req.params;
       const user = req.user!;
+      const businessId = (await db('api_keys').where('id', user.id).first())?.business_id;
 
-      const existingDispute = await this.disputeService.getDisputeById(id);
-
+      const existingDispute = await this.disputeService.getDisputeById(id, user.role === 'admin' ? null : businessId);
       if (!existingDispute) {
         throw new HttpError(404, 'Dispute not found');
       }
@@ -269,7 +384,7 @@ export class DisputeController {
         throw new HttpError(403, 'Not authorized to view this dispute history');
       }
 
-      const history = await this.disputeService.getDisputeHistory(id);
+      const history = await this.disputeService.getDisputeHistory(id, user.role === 'admin' ? null : businessId);
 
       res.send({
         status: 'success',
@@ -277,7 +392,10 @@ export class DisputeController {
       });
     } catch (error: any) {
       logger.error(`Error getting dispute history: ${error.message}`, { disputeId: req.params.id });
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to retrieve dispute history');
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to retrieve dispute history',
+      }, error.statusCode || 500);
     }
   };
 
@@ -285,9 +403,9 @@ export class DisputeController {
     try {
       const { id } = req.params;
       const user = req.user!;
+      const businessId = (await db('api_keys').where('id', user.id).first())?.business_id;
 
-      const existingDispute = await this.disputeService.getDisputeById(id);
-
+      const existingDispute = await this.disputeService.getDisputeById(id, user.role === 'admin' ? null : businessId);
       if (!existingDispute) {
         throw new HttpError(404, 'Dispute not found');
       }
@@ -300,7 +418,7 @@ export class DisputeController {
         throw new HttpError(400, 'Cannot cancel a dispute that is already resolved or rejected');
       }
 
-      const updatedDispute = await this.disputeService.cancelDispute(id, user);
+      const updatedDispute = await this.disputeService.cancelDispute(id, user, user.role === 'admin' ? null : businessId);
 
       res.send({
         status: 'success',
@@ -309,7 +427,10 @@ export class DisputeController {
       });
     } catch (error: any) {
       logger.error(`Error cancelling dispute: ${error.message}`, { disputeId: req.params.id });
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to cancel dispute');
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to cancel dispute',
+      }, error.statusCode || 500);
     }
   };
 
@@ -317,12 +438,13 @@ export class DisputeController {
     try {
       const { from_date, to_date } = req.query as any;
       const user = req.user!;
+      const businessId = user.role === 'admin' ? null : (await db('api_keys').where('id', user.id).first())?.business_id;
 
       if (user.role !== 'admin') {
         throw new HttpError(403, 'Admin access required');
       }
 
-      const stats = await this.disputeService.getDisputeStats(from_date, to_date);
+      const stats = await this.disputeService.getDisputeStats(from_date, to_date, businessId);
 
       res.send({
         status: 'success',
@@ -330,7 +452,10 @@ export class DisputeController {
       });
     } catch (error: any) {
       logger.error(`Error getting dispute stats: ${error.message}`);
-      throw error instanceof HttpError ? error : new HttpError(500, 'Failed to retrieve dispute statistics');
+      res.send({
+        status: 'error',
+        message: error.message || 'Failed to retrieve dispute statistics',
+      }, error.statusCode || 500);
     }
   };
 }

@@ -72,10 +72,19 @@ export const config = {
   },
 
   apiKeys: {
-    initialUserName: requireEnv('API_KEY_INITIAL_NAME'),
-    initialUserEmail: requireEnv('API_KEY_INITIAL_EMAIL'),
-    initialUserRole: requireEnv('API_KEY_INITIAL_ROLE'),
-    initialUserIps: requireEnv('API_KEY_INITIAL_IPS').split(',').map(ip => ip.trim()),
+    admin: {
+      name: requireEnv('ADMIN_API_KEY_NAME'),
+      email: requireEnv('ADMIN_API_KEY_EMAIL'),
+      role: requireEnv('ADMIN_API_KEY_ROLE'),
+      ips: requireEnv('ADMIN_API_KEY_IPS').split(',').map(ip => ip.trim()),
+    },
+    business: {
+      name: requireEnv('BUSINESS_API_KEY_NAME'),
+      email: requireEnv('BUSINESS_API_KEY_EMAIL'),
+      role: requireEnv('BUSINESS_API_KEY_ROLE'),
+      ips: requireEnv('BUSINESS_API_KEY_IPS').split(',').map(ip => ip.trim()),
+      businessId: requireEnv('BUSINESS_ID'),
+    },
   },
 
   network: {

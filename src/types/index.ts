@@ -6,6 +6,7 @@ interface User {
   id: string;
   email: string;
   role: 'admin' | 'user' | 'arbitrator';
+  business_id?: string | null;
   [key: string]: any;
 }
 
@@ -13,10 +14,15 @@ type CustomRequest = (RestanaRequest | ExpressRequest) & Partial<IncomingMessage
   user?: User;
   body: any;
   headers: { [key: string]: string | string[] | undefined };
-  params: { [key: string]: string | undefined };
-  clientEmail?: string;
+  params: {
+    id?: string;
+    email?: string;
+    profileId?: string; 
+    [key: string]: string | undefined; 
+  };
+  initiatorEmail?: string;
   counterpartyEmail?: string;
-  clientIp?: string; 
+  clientIp?: string;
   ip: string;
   path: string;
   method: string;

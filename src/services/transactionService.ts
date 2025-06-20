@@ -142,7 +142,7 @@ export class TransactionService {
       if (beneficiary_account_name) query.where('beneficiary_account_name', 'like', `%${beneficiary_account_name}%`);
       if (beneficiary_bank) query.where('beneficiary_bank', 'like', `%${beneficiary_bank}%`);
       if (amount) query.where('amount', amount);
-      if (status) query.where('status', status); // Exact match for status
+      if (status) query.where('status', status); 
       if (channel_code) query.where('channel_code', channel_code);
       if (destination_node) query.where('destination_node', destination_node);
       if (from_date) query.where('transaction_date', '>=', from_date);

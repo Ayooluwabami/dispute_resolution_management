@@ -8,7 +8,6 @@ export class HttpError extends Error {
     this.details = details;
     this.name = 'HttpError';
     
-    // This captures the proper stack trace in Node.js
     Error.captureStackTrace(this, this.constructor);
   }
 }

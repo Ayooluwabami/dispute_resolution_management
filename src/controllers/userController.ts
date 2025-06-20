@@ -64,7 +64,7 @@ export class UserController {
       }
 
       await this.userService.activateUser(email);
-      await redisService.deleteOTP(`reg_${email}`);
+      await redisService.delete(`reg_${email}`);
 
       const user = await this.userService.getUserByEmail(email);
       const token = this.authService.generateToken(user);
@@ -165,7 +165,7 @@ export class UserController {
       }
 
       await this.userService.updatePassword(email, newPassword);
-      await redisService.deleteOTP(`reset_${email}`);
+      await redisService.delete(`reset_${email}`);
 
       res.send({
         status: 'success',

@@ -85,7 +85,7 @@ export default async function apiKeyAuth(req: CustomRequest, res: RestanaRespons
           path: req.path,
           method: req.method,
         });
-        throw new HttpError(500, 'Internal server error');
+        throw new HttpError(500, 'Database error during API key validation');
       }
     }
 
@@ -95,19 +95,20 @@ export default async function apiKeyAuth(req: CustomRequest, res: RestanaRespons
       id: apiKeyData.id,
       email: apiKeyData.email,
       role: apiKeyData.role,
+      business_id: apiKeyData.business_id || null,
     };
     req.clientIp = clientIp;
 
     // Apply email validation only for POST /disputes
     if (req.path === '/api/v1/disputes' && req.method === 'POST') {
-      if (!req.body.clientEmail || !req.body.counterpartyEmail) {
-        throw new HttpError(400, 'Both clientEmail and counterpartyEmail are required');
+      if (!req.body.initiatorEmail || !req.body.counterpartyEmail) {
+        throw new HttpError(400, 'Both initiatorEmail and counterpartyEmail are required');
       }
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(req.body.clientEmail) || !emailRegex.test(req.body.counterpartyEmail)) {
+      if (!emailRegex.test(req.body.initiatorEmail) || !emailRegex.test(req.body.counterpartyEmail)) {
         throw new HttpError(400, 'Invalid email format');
       }
-      req.clientEmail = req.body.clientEmail;
+      req.initiatorEmail = req.body.initiatorEmail;
       req.counterpartyEmail = req.body.counterpartyEmail;
     }
 
